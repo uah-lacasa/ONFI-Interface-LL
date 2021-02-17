@@ -342,7 +342,7 @@ class IO:
     def dump_info(self):
         print('Full ID:\t', self.IDString)
         print('ID:\t\t0x%x' % self.ID)
-        print('Total Size:\t\t0x%x MBytes' % self.ChipSizeMB)
+        print('Total Size:\t\t0x{0:x}({0:d}) MBytes'.format(self.ChipSizeMB))
         print('Page size:\t 0x{0:x}({0:d}) Bytes'.format(self.PageSize))
         print('OOB size:\t0x{0:x} ({0:d}) Bytes'.format(self.OOBSize))
         print('Block size:\t0x{0:x} ({0:d}) Pages'.format(self.PagePerBlock))
