@@ -52,7 +52,12 @@ class IO:
                 self.ftdi.write_data(Array('B', [ftdi.Ftdi.SET_BITS_HIGH, 0x0, 0x1]))
 
         self.__wait_ready()
-        self.__get_id()
+        
+        if not self.__get_id():
+            print(f"E: Unable to read the device information")
+            sys.exit(-1)
+
+        self.ftdi.close()
 
     def __wait_ready(self):
         if self.ftdi is None or not self.ftdi.is_connected:
@@ -156,30 +161,41 @@ class IO:
         flash_identifiers = self.__read_data(8)
 
         if not flash_identifiers:
+            print(f"E: Could not read ID from address 0")
             return False
 
-        for device_description in flashdevice_defs.DEVICE_DESCRIPTIONS:
-            if device_description[1] == flash_identifiers[0]:
-                (self.Name, self.ID, self.PageSize, self.ChipSizeMB, self.EraseSize, self.Options, self.AddrCycles) = device_description
-                self.Identified = True
-                break
+# This section uses a "HACK" to populate flash properties
+# .. self.Name, self.ID, self.PageSize, self.ChipSizeMB, self.EraseSize, self.Options, self.AddrCycles
+# .. we will populate through ONFI page data read
+        # for device_description in flashdevice_defs.DEVICE_DESCRIPTIONS:
+        #     if device_description[1] == flash_identifiers[0]:
+        #         (self.Name, self.ID, self.PageSize, self.ChipSizeMB, self.EraseSize, self.Options, self.AddrCycles) = device_description
+        #         self.Identified = True
+        #         break
 
-        if not self.Identified:
-            return False
+        # if not self.Identified:
+        #     return False
 
         #Check ONFI
         self.__send_cmd(flashdevice_defs.NAND_CMD_READID)
         self.__send_address(0x20, 1)
         onfitmp = self.__read_data(4)
 
-        onfi = (onfitmp == [0x4F, 0x4E, 0x46, 0x49])
+        onfi = (onfitmp[0]==0x4F and onfitmp[1]==0x4E and onfitmp[2]==0x46 and onfitmp[3]==0x49)
 
+        # if it is ONFI, it is identified
         if onfi:
+            self.Identified = True
             self.__send_cmd(flashdevice_defs.NAND_CMD_ONFI)
             self.__send_address(0, 1)
             self.__wait_ready()
             onfi_data = self.__read_data(0x100)
             onfi = onfi_data[0:4] == [0x4F, 0x4E, 0x46, 0x49]
+        else:
+            # print(f"E: Its not ONFI. Read values are {chr(onfitmp[0]),chr(onfitmp[1]),chr(onfitmp[2]),chr(onfitmp[3])}")
+            print(f"E: Its not ONFI. Read values are {(onfitmp[0]),(onfitmp[1]),(onfitmp[2]),(onfitmp[3])}")
+            self.Identified = False
+            return False
 
         if flash_identifiers[0] == 0x98:
             self.Manufacturer = 'Toshiba'
@@ -204,84 +220,108 @@ class IO:
         else:
             self.Manufacturer = 'Unknown'
 
-        idstr = ''
-        for idbyte in flash_identifiers:
-            idstr += "%X" % idbyte
-        if idstr[0:4] == idstr[-4:]:
-            idstr = idstr[:-4]
-            if idstr[0:2] == idstr[-2:]:
-                idstr = idstr[:-2]
-        self.IDString = idstr
-        self.IDLength = int(len(idstr) / 2)
-        self.BitsPerCell = self.get_bits_per_cell(flash_identifiers[2])
-        if self.PageSize == 0:
-            extid = flash_identifiers[3]
-            if ((self.IDLength == 6) and (self.Manufacturer == "Samsung") and (self.BitsPerCell > 1)):
-                self.Pagesize = 2048 << (extid & 0x03)
-                extid >>= 2
-                if (((extid >> 2) & 0x04) | (extid & 0x03)) == 1:
-                    self.OOBSize = 128
-                if (((extid >> 2) & 0x04) | (extid & 0x03)) == 2:
-                    self.OOBSize = 218
-                if (((extid >> 2) & 0x04) | (extid & 0x03)) == 3:
-                    self.OOBSize = 400
-                if (((extid >> 2) & 0x04) | (extid & 0x03)) == 4:
-                    self.OOBSize = 436
-                if (((extid >> 2) & 0x04) | (extid & 0x03)) == 5:
-                    self.OOBSize = 512
-                if (((extid >> 2) & 0x04) | (extid & 0x03)) == 6:
-                    self.OOBSize = 640
-                else:
-                    self.OOBSize = 1024
-                extid >>= 2
-                self.EraseSize = (128 * 1024) << (((extid >> 1) & 0x04) | (extid & 0x03))
-            elif ((self.IDLength == 6) and (self.Manufacturer == 'Hynix') and (self.BitsPerCell > 1)):
-                self.PageSize = 2048 << (extid & 0x03)
-                extid >>= 2
-                if (((extid >> 2) & 0x04) | (extid & 0x03)) == 0:
-                    self.OOBSize = 128
-                elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 1:
-                    self.OOBSize = 224
-                elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 2:
-                    self.OOBSize = 448
-                elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 3:
-                    self.OOBSize = 64
-                elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 4:
-                    self.OOBSize = 32
-                elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 5:
-                    self.OOBSize = 16
-                else:
-                    self.OOBSize = 640
-                tmp = ((extid >> 1) & 0x04) | (extid & 0x03)
-                if tmp < 0x03:
-                    self.EraseSize = (128 * 1024) << tmp
-                elif tmp == 0x03:
-                    self.EraseSize = 768 * 1024
-                else: self.EraseSize = (64 * 1024) << tmp
-            else:
-                self.PageSize = 1024 << (extid & 0x03)
-                extid >>= 2
-                self.OOBSize = (8 << (extid & 0x01)) * (self.PageSize >> 9)
-                extid >>= 2
-                self.EraseSize = (64 * 1024) << (extid & 0x03)
-                if ((self.IDLength >= 6) and (self.Manufacturer == "Toshiba") and (self.BitsPerCell > 1) and ((flash_identifiers[5] & 0x7) == 0x6) and not flash_identifiers[4] & 0x80):
-                    self.OOBSize = 32 * self.PageSize >> 9
-        else:
-            self.OOBSize = int(self.PageSize / 32)
+# Code added by Prawar 17 Feb 2021
+        self.IDString = ''
+        for id_idx in range(44,64,1):
+            self.IDString += chr(onfi_data[id_idx])
 
-        if self.PageSize > 0:
-            self.PageCount = int(self.ChipSizeMB*1024*1024 / self.PageSize)
-        self.RawPageSize = self.PageSize + self.OOBSize
-        self.BlockSize = self.EraseSize
-        self.BlockCount = int((self.ChipSizeMB*1024*1024) / self.BlockSize)
+        self.ID = onfi_data[64] # 64th byte in ONFI page is Manufacturer ID
+        self.PageSize = onfi_data[80] + 256 * onfi_data[81] + 256 * 256 * onfi_data[82] +  256 * 256 * 256 * onfi_data[83]
+        self.OOBSize = onfi_data[84] + 256 * onfi_data[85]
+        self.RawPageSize = self.PageSize+self.OOBSize
+        self.Options = 1
+        self.PagePerBlock = onfi_data[92] + 256 * onfi_data[93] + 256 * 256 * onfi_data[94] +  256 * 256 * 256 * onfi_data[95]
+        self.BlockSize = self.PagePerBlock*self.RawPageSize
+        self.RawBlockSize = self.BlockSize
+        self.EraseSize = self.BlockSize# size of Block in bytes
+        self.LUNS = onfi_data[100]
+        self.BlockPerLUN = onfi_data[96] + 256 * onfi_data[97] + 256 * 256 * onfi_data[98] +  256 * 256 * 256 * onfi_data[99]
+        self.BlockCount = self.LUNS * self.BlockPerLUN
+        self.PageCount = self.BlockCount * self.PagePerBlock
+        self.ChipSizeMB = self.PageCount * self.RawPageSize//(1024*1024)
 
-        if self.BlockCount <= 0:
-            self.PagePerBlock = 0
-            self.RawBlockSize = 0
-            return False
+        self.AddrCycles = 5
+        self.BitsPerCell = onfi_data[102]
 
-        self.PagePerBlock = int(self.PageCount / self.BlockCount)
-        self.RawBlockSize = self.PagePerBlock*(self.PageSize + self.OOBSize)
+# Following code is removed. They are unnecessary if we are reading from ONFI page
+        # idstr = ''
+        # for idbyte in flash_identifiers:
+        #     idstr += "%X" % idbyte
+        # if idstr[0:4] == idstr[-4:]:
+        #     idstr = idstr[:-4]
+        #     if idstr[0:2] == idstr[-2:]:
+        #         idstr = idstr[:-2]
+        # self.IDString = idstr
+        # self.IDLength = int(len(idstr) / 2)
+        # self.BitsPerCell = self.get_bits_per_cell(flash_identifiers[2])
+        # if self.PageSize == 0:
+        #     extid = flash_identifiers[3]
+        #     if ((self.IDLength == 6) and (self.Manufacturer == "Samsung") and (self.BitsPerCell > 1)):
+        #         self.Pagesize = 2048 << (extid & 0x03)
+        #         extid >>= 2
+        #         if (((extid >> 2) & 0x04) | (extid & 0x03)) == 1:
+        #             self.OOBSize = 128
+        #         if (((extid >> 2) & 0x04) | (extid & 0x03)) == 2:
+        #             self.OOBSize = 218
+        #         if (((extid >> 2) & 0x04) | (extid & 0x03)) == 3:
+        #             self.OOBSize = 400
+        #         if (((extid >> 2) & 0x04) | (extid & 0x03)) == 4:
+        #             self.OOBSize = 436
+        #         if (((extid >> 2) & 0x04) | (extid & 0x03)) == 5:
+        #             self.OOBSize = 512
+        #         if (((extid >> 2) & 0x04) | (extid & 0x03)) == 6:
+        #             self.OOBSize = 640
+        #         else:
+        #             self.OOBSize = 1024
+        #         extid >>= 2
+        #         self.EraseSize = (128 * 1024) << (((extid >> 1) & 0x04) | (extid & 0x03))
+        #     elif ((self.IDLength == 6) and (self.Manufacturer == 'Hynix') and (self.BitsPerCell > 1)):
+        #         self.PageSize = 2048 << (extid & 0x03)
+        #         extid >>= 2
+        #         if (((extid >> 2) & 0x04) | (extid & 0x03)) == 0:
+        #             self.OOBSize = 128
+        #         elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 1:
+        #             self.OOBSize = 224
+        #         elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 2:
+        #             self.OOBSize = 448
+        #         elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 3:
+        #             self.OOBSize = 64
+        #         elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 4:
+        #             self.OOBSize = 32
+        #         elif (((extid >> 2) & 0x04) | (extid & 0x03)) == 5:
+        #             self.OOBSize = 16
+        #         else:
+        #             self.OOBSize = 640
+        #         tmp = ((extid >> 1) & 0x04) | (extid & 0x03)
+        #         if tmp < 0x03:
+        #             self.EraseSize = (128 * 1024) << tmp
+        #         elif tmp == 0x03:
+        #             self.EraseSize = 768 * 1024
+        #         else: self.EraseSize = (64 * 1024) << tmp
+        #     else:
+        #         self.PageSize = 1024 << (extid & 0x03)
+        #         extid >>= 2
+        #         self.OOBSize = (8 << (extid & 0x01)) * (self.PageSize >> 9)
+        #         extid >>= 2
+        #         self.EraseSize = (64 * 1024) << (extid & 0x03)
+        #         if ((self.IDLength >= 6) and (self.Manufacturer == "Toshiba") and (self.BitsPerCell > 1) and ((flash_identifiers[5] & 0x7) == 0x6) and not flash_identifiers[4] & 0x80):
+        #             self.OOBSize = 32 * self.PageSize >> 9
+        # else:
+        #     self.OOBSize = int(self.PageSize / 32)
+
+        # if self.PageSize > 0:
+        #     self.PageCount = int(self.ChipSizeMB*1024*1024 / self.PageSize)
+        # self.RawPageSize = self.PageSize + self.OOBSize
+        # self.BlockSize = self.EraseSize
+        # self.BlockCount = int((self.ChipSizeMB*1024*1024) / self.BlockSize)
+
+        # if self.BlockCount <= 0:
+        #     self.PagePerBlock = 0
+        #     self.RawBlockSize = 0
+        #     return False
+
+        # self.PagePerBlock = int(self.PageCount / self.BlockCount)
+        # self.RawBlockSize = self.PagePerBlock*(self.PageSize + self.OOBSize)
 
         return True
 
@@ -301,15 +341,17 @@ class IO:
 
     def dump_info(self):
         print('Full ID:\t', self.IDString)
-        print('ID Length:\t', self.IDLength)
-        print('Name:\t\t', self.Name)
         print('ID:\t\t0x%x' % self.ID)
-        print('Page size:\t 0x{0:x}({0:d})'.format(self.PageSize))
-        print('OOB size:\t0x{0:x} ({0:d})'.format(self.OOBSize))
-        print('Page count:\t0x%x' % self.PageCount)
-        print('Size:\t\t0x%x' % self.ChipSizeMB)
-        print('Erase size:\t0x%x' % self.EraseSize)
+        print('Total Size:\t\t0x%x MBytes' % self.ChipSizeMB)
+        print('Page size:\t 0x{0:x}({0:d}) Bytes'.format(self.PageSize))
+        print('OOB size:\t0x{0:x} ({0:d}) Bytes'.format(self.OOBSize))
+        print('Block size:\t0x{0:x} ({0:d}) Pages'.format(self.PagePerBlock))
+        print('Block size:\t0x{0:x} ({0:d}) Bytes'.format(self.BlockSize))
+        print('Erase size:\t0x%x Bytes' % self.EraseSize)
+        print('Num of LUNS:\t0x{0:x} ({0:d})'.format(self.LUNS))
+        print('Blocks per LUN:\t0x{0:x} ({0:d})'.format(self.BlockPerLUN))
         print('Block count:\t', self.BlockCount)
+        print('Total Page count:\t0x%x' % self.PageCount)
         print('Options:\t', self.Options)
         print('Address cycle:\t', self.AddrCycles)
         print('Bits per Cell:\t', self.BitsPerCell)
