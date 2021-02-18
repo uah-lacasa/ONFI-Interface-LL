@@ -9,7 +9,7 @@ my_nand_instance = IO(False)
 my_nand_instance.dump_info()
 
 # create a binary file with random data. Can be used later to program a page
-my_rand_array =  np.random.randint(256,size = (my_nand_instance.RawPageSize),dtype=np.uint8)
+my_rand_array =  np.random.randint(230,size = (my_nand_instance.RawPageSize),dtype=np.uint8)
 my_rand_array.tofile(input_file)
 
 # use the following function call to find bab blocks
@@ -44,3 +44,6 @@ my_nand_instance.erase_blocks(0,0)
 # .. the first argument is page idx in block whose index is second argument
 data_3 = my_nand_instance.read_page_from_block(1,0)
 utils.write_to_file('output_dump3.bin',data_3,True)
+
+# use the following function to compute BER
+utils.compute_ber(input_file,True,'output_dump2.bin',True)
