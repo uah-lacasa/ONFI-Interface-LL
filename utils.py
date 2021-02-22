@@ -9,7 +9,7 @@ def print_page(page_data):
 def write_to_file(output_file,page_data, write_binary = False):
 	if write_binary:
 		fd = open(output_file,'wb')
-		fd.write(page_data)
+		fd.write(bytes(page_data))
 		fd.close()
 	else:
 		print_str = ''
