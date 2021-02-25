@@ -112,11 +112,31 @@ class IO:
             cmd_type |= flashdevice_defs.ADR_WP
 
         cmds += [ftdi.Ftdi.WRITE_EXTENDED, cmd_type, 0, ord(data[0])]
-        
+
         for i in range(1, len(data), 1):
             #if i == 256:
             #    cmds += [Ftdi.WRITE_SHORT, 0, ord(data[i])]
             cmds += [ftdi.Ftdi.WRITE_SHORT, 0, ord(data[i])]
+
+        if self.ftdi is None or not self.ftdi.is_connected:
+            return
+
+        self.ftdi.write_data(Array('B', cmds))
+
+    def __write_bin(self, cl, al, data_bin):
+        cmds = []
+        cmd_type = 0
+        if cl == 1:
+            cmd_type |= flashdevice_defs.ADR_CL
+        if al == 1:
+            cmd_type |= flashdevice_defs.ADR_AL
+        if not self.WriteProtect:
+            cmd_type |= flashdevice_defs.ADR_WP
+
+        cmds += [ftdi.Ftdi.WRITE_EXTENDED, cmd_type, 0, data_bin[0]]
+        
+        for i in range(1, len(data_bin), 1):
+            cmds += [ftdi.Ftdi.WRITE_SHORT, 0, data_bin[i]]
 
         if self.ftdi is None or not self.ftdi.is_connected:
             return
@@ -145,6 +165,9 @@ class IO:
 
     def __write_data(self, data):
         return self.__write(0, 0, data)
+
+    def __write_data_bin(self, data):
+        return self.__write_bin(0, 0, data)
 
     def __get_id(self):
         self.Name = ''
@@ -506,6 +529,56 @@ class IO:
 
         return err
 
+    # This function can be used to set features
+    # .. feature_address is the address of the feature to change
+    # .. feature_values is a four-element list of hex values
+    def set_features_bin(self, feature_address, feature_values):
+        if len(feature_values) != 4:
+            print(f"E: Error in Set Features. Please send a list of 4 feature values")
+            sys.exit(-1)
+        self.__send_cmd(flashdevice_defs.NAND_CMD_SET_FEATURES)
+        self.__wait_ready()
+        self.__send_address(feature_address,1)
+        self.__wait_ready()
+        # we need a delay
+        time.sleep(0.05)
+        self.__write_data_bin(feature_values)
+
+        return
+
+    def set_features(self, feature_address, feature_values):
+        if len(feature_values) != 4:
+            print(f"E: Error in Set Features. Please send a list of 4 feature values")
+            sys.exit(-1)
+        self.__send_cmd(flashdevice_defs.NAND_CMD_SET_FEATURES)
+        self.__wait_ready()
+        self.__send_address(feature_address,1)
+        self.__wait_ready()
+        # we need a delay
+        time.sleep(0.05)
+        data = ''
+
+        for each_val in feature_values:
+            data += chr(each_val & 0xff)
+
+        self.__write(0, 0, data)
+        self.__wait_ready()
+
+        return
+# page_data = self.__read_data(self.RawPageSize)
+    
+    #This function can be used to get feature values
+    # .. feature address is the address of the feature address to read
+    # .. the return value is a four element array
+    def get_features(self, feature_address):
+        self.__send_cmd(flashdevice_defs.NAND_CMD_GET_FEATURES)
+        self.__wait_ready()
+        self.__send_address(feature_address,1)
+        self.__wait_ready()
+        # we need a delay
+        time.sleep(0.05)
+        return self.__read_data(4)
+
     # this function write a page of flash memory
     # .. the pageno is index of page in global scope
     def write_page(self, pageno, data):
@@ -566,6 +639,33 @@ class IO:
         self.WriteProtect = True
         return err
 
+    def convert_to_SLC_mode(self, block_idx):
+        data = ""
+        for each_byte_in_page in range(self.PageSize):
+            data += chr(0)
+        self.write_all_pages_in_a_block(block_idx,data)
+
+        to_set_features = [1,1,0,0]
+        self.set_features(0x91,to_set_features)
+
+        self.erase_blocks(block_idx,block_idx)
+
+    def get_SLC_MLC(self):
+        my_values = self.get_features(0x91)
+        if(my_values[0] == 1):
+            return "SLC"
+        elif my_values[0]== 2:
+            return "MLC"
+        else:
+            return "Unknown"
+
+    def revert_to_MLC(self):
+        to_set_features = [2,1,0,0]
+        self.set_features(0x91,to_set_features)
+
+    def write_all_pages_in_a_block(self,block_idx,data):
+        for each_pages in range(self.PagePerBlock):
+            self.write_page_in_a_block(each_pages, block_idx, data)
 
     # this function write a page of flash memory
     # .. the pageno is index of page in block of index block_idx

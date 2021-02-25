@@ -47,3 +47,5 @@ utils.write_to_file('output_dump3.bin',data_3,True)
 
 # use the following function to compute BER
 utils.compute_ber(input_file,True,'output_dump2.bin',True)
+
+print(f"SLC/MLC: {my_nand_instance.get_SLC_MLC()}")
