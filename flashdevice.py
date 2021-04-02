@@ -265,7 +265,9 @@ class IO:
         self.PageCount = self.BlockCount * self.PagePerBlock
         self.ChipSizeMB = self.PageCount * self.RawPageSize//(1024*1024)
 
-        self.AddrCycles = 5
+        self.ColumnCycles = ((0xf0&onfi_data[101])>>4)
+        self.RowCycles = (0x0f&onfi_data[101])
+        self.AddrCycles = self.ColumnCycles+self.RowCycles
         self.BitsPerCell = onfi_data[102]
 
         return True
@@ -296,7 +298,7 @@ class IO:
         print('Block count:\t', self.BlockCount)
         print('Total Page count:\t0x%x' % self.PageCount)
         print('Options:\t', self.Options)
-        print('Address cycle:\t', self.AddrCycles)
+        print(f'Address cycle:\t {self.AddrCycles} (Column: {self.ColumnCycles},Row: {self.RowCycles})')
         print('Bits per Cell:\t', self.BitsPerCell)
         print('Manufacturer:\t', self.Manufacturer)
         print('')
@@ -346,57 +348,58 @@ class IO:
             data += chr(ch)
         return data
 
+    def change_read_column(self,column_address):
+        self.__send_cmd(flashdevice_defs.NAND_CMD_CHANGE_READ_COLUMN1)
+        self.__send_address(column_address,self.ColumnCycles)
+        self.__send_cmd(flashdevice_defs.NAND_CMD_CHANGE_READ_COLUMN2)
+
+    def read_page_bytewise(self,pageno, remove_oob = False):
+        length = (self.PageSize) if remove_oob else (self.RawPageSize)
+        bytes_to_read = []
+
+        self.__send_cmd(flashdevice_defs.NAND_CMD_READ0)
+        self.__send_address(pageno<<(8*self.ColumnCycles), self.AddrCycles)
+        self.__send_cmd(flashdevice_defs.NAND_CMD_READSTART)
+
+        for each_byte in range(length):
+            self.change_read_column(each_byte)
+            bytes_to_read += self.__read_data(1)
+
+        return bytes_to_read
+
     # This function will read page indexed 'pageno'
     # .. the index of the page is in global scope
-    def read_page(self, pageno, remove_oob = False):
+    def read_page(self, pageno, read_chunk = 0x1000, remove_oob = False):
 
         bytes_to_read = []
 
-        if self.Options & flashdevice_defs.LP_OPTIONS:
-            length = (self.PageSize) if remove_oob else (self.PageSize + self.OOBSize)
-            print(f"I: Reading page {pageno}, Options = 1, {length} bytes")
-            self.__send_cmd(flashdevice_defs.NAND_CMD_READ0)
-            self.__send_address(pageno<<16, self.AddrCycles)
-            self.__send_cmd(flashdevice_defs.NAND_CMD_READSTART)
+        length = (self.PageSize) if remove_oob else (self.RawPageSize)
+        print(f"I: Reading page {pageno}, {length} bytes")
+        self.__send_cmd(flashdevice_defs.NAND_CMD_READ0)
+        self.__send_address(pageno<<(8*self.ColumnCycles), self.AddrCycles)
+        self.__send_cmd(flashdevice_defs.NAND_CMD_READSTART)
 
-            if self.PageSize > 0x1000:
-                while length > 0:
-                    read_len = 0x1000
-                    if length < 0x1000:
-                        read_len = length
-                    bytes_to_read += self.__read_data(read_len)
-                    length -= 0x1000
-            else:
-                bytes_to_read = self.__read_data(length)
-
-            #d: Implement remove_oob
+        if self.PageSize > read_chunk:
+            while length > 0:
+                read_len = read_chunk
+                if length < read_chunk:
+                    read_len = length
+                bytes_to_read += self.__read_data(read_len)
+                length -= read_chunk
         else:
-            print(f"I: Reading page {pageno}, Options = 0")
-            self.__send_cmd(flashdevice_defs.NAND_CMD_READ0)
-            self.__wait_ready()
-            self.__send_address(pageno<<8, self.AddrCycles)
-            self.__wait_ready()
-            bytes_to_read += self.__read_data(self.PageSize/2)
-
-            self.__send_cmd(flashdevice_defs.NAND_CMD_READ1)
-            self.__wait_ready()
-            self.__send_address(pageno<<8, self.AddrCycles)
-            self.__wait_ready()
-            bytes_to_read += self.__read_data(self.PageSize/2)
-
-            if not remove_oob:
-                self.__send_cmd(flashdevice_defs.NAND_CMD_READ_OOB)
-                self.__wait_ready()
-                self.__send_address(pageno<<8, self.AddrCycles)
-                self.__wait_ready()
-                bytes_to_read += self.__read_data(self.OOBSize)
+            bytes_to_read = self.__read_data(length)
 
         return bytes_to_read
 
     # This function will read the page indexed 'pageno' inside block indexed 'blockno'
-    def read_page_from_block(self, pageno, blockno = 0, remove_oob = False):
+    def read_page_from_block(self, pageno, blockno = 0, read_chunk = 0x1000, remove_oob = False):
         page_no_to_read = blockno*self.PagePerBlock+pageno
-        return self.read_page(page_no_to_read,remove_oob)
+        return self.read_page(page_no_to_read,read_chunk,remove_oob)
+
+    #  this function uses chanage read colum feature to read each byte of a page from cache memory
+    def read_page_from_block_bytewise(self, pageno, blockno = 0, remove_oob = False):
+        page_no_to_read = blockno*self.PagePerBlock+pageno
+        return self.read_page_bytewise(page_no_to_read,remove_oob)
 
     # 
     def read_seq(self, pageno, remove_oob = False, raw_mode = False):
@@ -508,70 +511,20 @@ class IO:
         err = 0
         self.WriteProtect = False
 
-        if self.Options & flashdevice_defs.LP_OPTIONS:
-            self.__send_cmd(flashdevice_defs.NAND_CMD_SEQIN)
-            self.__wait_ready()
-            self.__send_address(pageno<<16, self.AddrCycles)
-            self.__wait_ready()
-            self.__write_data(data)
-            self.__send_cmd(flashdevice_defs.NAND_CMD_PAGEPROG)
-            self.__wait_ready()
-        else:
-            while 1:
-                self.__send_cmd(flashdevice_defs.NAND_CMD_READ0)
-                self.__send_cmd(flashdevice_defs.NAND_CMD_SEQIN)
-                self.__wait_ready()
-                self.__send_address(pageno<<8, self.AddrCycles)
-                self.__wait_ready()
-                self.__write_data(data[0:256])
-                self.__send_cmd(flashdevice_defs.NAND_CMD_PAGEPROG)
-                err = self.__get_status()
-                if err & flashdevice_defs.NAND_STATUS_FAIL:
-                    print('Failed to write 1st half of ', pageno, err)
-                    continue
-                break
-
-            while 1:
-                self.__send_cmd(flashdevice_defs.NAND_CMD_READ1)
-                self.__send_cmd(flashdevice_defs.NAND_CMD_SEQIN)
-                self.__wait_ready()
-                self.__send_address(pageno<<8, self.AddrCycles)
-                self.__wait_ready()
-                self.__write_data(data[self.PageSize/2:self.PageSize])
-                self.__send_cmd(flashdevice_defs.NAND_CMD_PAGEPROG)
-                err = self.__get_status()
-                if err & flashdevice_defs.NAND_STATUS_FAIL:
-                    print('Failed to write 2nd half of ', pageno, err)
-                    continue
-                break
-
-            while 1:
-                self.__send_cmd(flashdevice_defs.NAND_CMD_READ_OOB)
-                self.__send_cmd(flashdevice_defs.NAND_CMD_SEQIN)
-                self.__wait_ready()
-                self.__send_address(pageno<<8, self.AddrCycles)
-                self.__wait_ready()
-                self.__write_data(data[self.PageSize:self.RawPageSize])
-                self.__send_cmd(flashdevice_defs.NAND_CMD_PAGEPROG)
-                err = self.__get_status()
-                if err & flashdevice_defs.NAND_STATUS_FAIL:
-                    print('Failed to write OOB of ', pageno, err)
-                    continue
-                break
+        self.__send_cmd(flashdevice_defs.NAND_CMD_SEQIN)
+        self.__wait_ready()
+        self.__send_address(pageno<<(8*self.ColumnCycles), self.AddrCycles)
+        self.__wait_ready()
+        self.__write_data(data)
+        self.__send_cmd(flashdevice_defs.NAND_CMD_PAGEPROG)
+        self.__wait_ready()
 
         self.WriteProtect = True
         return err
 
     def convert_to_SLC_mode(self, block_idx):
-        data = ""
-        for each_byte_in_page in range(self.PageSize):
-            data += chr(0)
-        self.write_all_pages_in_a_block(block_idx,data)
-
         to_set_features = [1,1,0,0]
         self.set_features(0x91,to_set_features)
-
-        self.erase_blocks(block_idx,block_idx)
 
     def get_SLC_MLC(self):
         my_values = self.get_features(0x91)
