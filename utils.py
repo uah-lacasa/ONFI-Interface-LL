@@ -1,5 +1,14 @@
 import numpy as np
 
+# finds the number of 1s in the number input
+# ..  the algo iscalled Brain-Kernigham algo
+def count_number_of_1s(byte_in):
+	number_of_1s = 0	
+	while byte_in:
+		byte_in &= (byte_in-1)
+		number_of_1s++	
+	return number_of_1s
+
 def print_page(page_data):
 	# the data into this function 'page_data' must be a bytearray
 	# print(f"{page_data}")
