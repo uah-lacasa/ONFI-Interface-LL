@@ -1,3 +1,5 @@
+import numpy as np
+
 def print_page(page_data):
 	# the data into this function 'page_data' must be a bytearray
 	# print(f"{page_data}")
@@ -45,3 +47,24 @@ def compute_ber(file1,is_file1_binary,file2,is_file2_binary):
 			ber += 1
 
 	print(f"I: BER comparing {file1} and {file2} is {ber/len(data1)}")
+
+def create_array(array_pattern, array_size, filename=""):
+	'''Creates numpy array with values following specified pattern, optionally writing it to a file if a filename is specified.'''
+	if array_pattern == "zeros":
+		new_array = np.zeros(array_size, dtype=np.uint8)
+
+	elif array_pattern == "ones":
+		new_array = np.ones(array_size, dtype=np.uint8)
+
+	elif array_pattern == "checkered":
+		new_array = np.empty(array_size, dtype=np.uint8)
+		new_array[::2] = 0
+		new_array[1::2] = 1
+
+	elif array_pattern == "random":
+		new_array = np.random.randint(256, size=array_size, dtype=np.uint8)
+
+	if filename:
+		new_array.tofile(filename)
+
+	return new_array

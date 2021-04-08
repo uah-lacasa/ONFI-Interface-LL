@@ -7,6 +7,10 @@ import sys
 import traceback
 from pyftdi import ftdi
 import flashdevice_defs
+import utils
+from matplotlib import pyplot
+import csv
+import numpy as np
 
 class IO:
     def __init__(self, do_slow = False, debug = 0, simulation_mode = False):
@@ -400,6 +404,75 @@ class IO:
     def read_page_from_block_bytewise(self, pageno, blockno = 0, remove_oob = False):
         page_no_to_read = blockno*self.PagePerBlock+pageno
         return self.read_page_bytewise(page_no_to_read,remove_oob)
+
+    def write_block_get_ber(self, block_idx):
+        """Writes random data to all pages in specified block and then compares data written to data intended to be written."""
+        random_data = utils.create_array("random", self.PageSize, filename="input.bin").tolist()
+        input_data = "".join(map(chr, random_data))
+
+        # self.write_block(block_idx, input_data, per_page=True)
+        self.write_all_pages_in_a_block(block_idx, input_data)
+
+        output_data = self.read_block(block_idx, remove_oob=True, comparison_file="input.bin", compare_per_page=True)
+        np.array(output_data, dtype=np.uint8).tofile("output.bin");
+
+        pages=[]
+        ber=[]
+
+        with open(self.IDString.rstrip() + "_BER.txt", "r") as error_data:
+            plot = csv.reader(error_data, delimiter=",")
+            for row in plot:
+                pages.append(row[1])
+                ber.append(row[2])
+
+        pyplot.plot(pages,ber)
+        pyplot.xlabel("Page")
+        pyplot.ylabel("Block Error Rate")
+        pyplot.title("BER per Page")
+        pyplot.show()
+
+    def read_block(self, blockno, remove_oob = False, comparison_file="", compare_per_page=False):
+        """Return data stored in all pages in specified block, computing the bit error rate if a comparison input is specified."""
+        bytes_read = []
+
+        # Prepare to write BER report if required
+        if comparison_file:
+            cf = open(comparison_file,'rb')
+            comparison_input = cf.read()
+            cf.close()
+
+            output_file = open(self.IDString.rstrip()  + "_BER.txt", "w")
+
+            page_offset = 0
+
+        # Begin processing pages
+        for pageno in range(0, self.PagePerBlock, 1):
+            page_read = self.read_page_from_block_bytewise(pageno, blockno, remove_oob)
+
+            bytes_read += page_read
+
+            if comparison_file:
+                ber = 0.0
+
+                if remove_oob:
+                    page_offset += self.PageSize
+                else:
+                    page_offset += self.PageSize + self.OOBSize
+
+                if compare_per_page:
+                    read_offset = 0
+                else:
+                    read_offset = page_offset
+
+                for idx,each_byte in enumerate(page_read):
+                    if(compare_per_page and each_byte != comparison_input[idx + read_offset]):
+                        ber += 1
+
+                ber /= len(page_read)
+
+                output_file.write(f"{blockno},{pageno},{ber}\n")
+
+        return bytes_read
 
     # 
     def read_seq(self, pageno, remove_oob = False, raw_mode = False):
