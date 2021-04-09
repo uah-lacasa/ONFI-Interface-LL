@@ -50,12 +50,14 @@ def compute_ber(file1,is_file1_binary,file2,is_file2_binary):
 		# add other conditions later
 		return -1
 
-	ber = 0.0
+	number_of_bits_mismatch = 0.0
+	number_of_bytes_mismatch = 0.0
 	for idx,each_byte in enumerate(data1):
 		if(each_byte!=data2[idx]):
-			ber += 1
+			number_of_bytes_mismatch += 1
+			number_of_bits_mismatch += count_number_of_1s(each_byte^data2[idx])
 
-	print(f"I: BER comparing {file1} and {file2} is {ber/len(data1)}")
+	print(f"I: BER comparing {file1} and {file2} is Bytes: {number_of_bytes_mismatch}/{len(data1)}, Bits: {number_of_bits_mismatch}/{len(data1)*8}")
 
 def create_array(array_pattern, array_size, filename=""):
 	'''Creates numpy array with values following specified pattern, optionally writing it to a file if a filename is specified.'''
