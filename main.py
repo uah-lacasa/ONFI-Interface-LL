@@ -45,4 +45,4 @@ utils.compute_ber(input_file,True,'output_dump1.bin',True)
 utils.compute_ber(input_file,True,'output_dump2.bin',True)
 utils.compute_ber(input_file,True,'output_dump3.bin',True)
 
-# print(f"SLC/MLC: {my_nand_instance.get_SLC_MLC()}")
+print(f"SLC/MLC: {my_nand_instance.get_SLC_MLC()}")
