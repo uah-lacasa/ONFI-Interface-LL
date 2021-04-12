@@ -6,7 +6,7 @@ def count_number_of_1s(byte_in):
 	number_of_1s = 0	
 	while byte_in:
 		byte_in &= (byte_in-1)
-		number_of_1s++	
+		number_of_1s += 1
 	return number_of_1s
 
 def print_page(page_data):
